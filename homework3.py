@@ -1,24 +1,21 @@
-import math
-import random
-import re
 import os
-from collections import deque
+import re
+import copy
+import time
 
-# A global dictionary called KB. This will be used similar to a HashMap!.
-
-KB = {}
-pattern = r'([\~]?\w[\w]*)\((.*)\)$' # To be able to mathc the predicat and the specified parameters to the predicate in FOL
+KB = []
+pattern = r'([\~]?\w[\w]*)\((.*)\)$' # To be able to match the predicat and the specified parameters to the predicate in FOL
 outputDict = {}
 
 def readInput():
+	global KB
 	queryList = []
 	KBList = []
-	cnfList = []
 
-	file = open('input.txt', 'r')
-	inputParams = file.readlines()
+	input_file = open('input.txt', 'r')
+	inputParams = input_file.readlines()
+	input_file.close()
 
-	file.close()
 	queryArgs = inputParams[0: int(inputParams[0]) + 1]
 	KBArgs = inputParams[int(inputParams[0]) + 1::]
 
@@ -27,196 +24,143 @@ def readInput():
 	for i in range(1, len(KBArgs)):
 		KBList.append(KBArgs[i].rstrip('\n'))
 
-	# Call the helper functions to conver all the sentences from INF to CNF.
-	changeSentenceForm(KBList, cnfList)
-	# Parse the list of cnf literals and store each of the predicate in the KB. Common elements of the cnf will have the same cnf
-	populateKB(cnfList)
-	print (KB)
-	# Using Regex to get predicate name and all parameters for resolution and unification step!
-	# Take the negation of the query and search the KB for the specified negation.
-	result = inferFromKB(queryList)
+	convertToCNF(KBList)
 	outputString = ''
-	for keys in result.keys():
-		outputString = outputString + result[keys] + '\n'
-	# Write the output to the file.
-	output_file = open('output.txt', 'w')
-	output_file.write(outputString[0:len(outputString) - 1])
+	for query in queryList:
+		queryResult = resolutionAlgorithm(KB, query)
+		outputString = outputString + queryResult + '\n'
+	outputString = outputString[0:len(outputString) - 1]
+	output_file = open('output.txt' , 'w')
+	output_file.write(outputString)
 	output_file.close()
 
-def changeSentenceForm(KBList, cnfList):
-	for i in range(len(KBList)):
-		cnfList.append(convertToCNF(KBList[i]))
+def resolutionAlgorithm(KB, alpha):
+	# Returns true or false.
+	clauses = copy.deepcopy(KB)
+	clauses.append(negateLiteral(alpha))
+	new = set()
+	while True:
+		for i in range(len(clauses)):
+			for j in range(i+1, len(clauses)):
+				resolvents = resolveSentences(clauses[i], clauses[j])
+				if 'JUNK' in resolvents:
+					return 'TRUE'
+				new = new.union(resolvents)
+		if new.issubset(set(clauses)):
+			return 'FALSE'
+		clauses = list(set(clauses).union(new))
 
-def convertToCNF(string):
-	if '=>' in string:
-		convertedString = buildCNFSentence(string)
-		# Use the converted String to store it into the KB.
-		# If the string is a clause (disjunction), iterate over each predicate and store the value in the KB.
-		# If it is a single predicate literal, check if the KB has a predicate.
-		# If yes, add the new variables, ground terms to it.
-		# If not, create a new entry in the table and add the relevant details to it!
-		return convertedString
-	else:
-		return string
-
-def buildCNFSentence(string):
-	#Split at the implication sign and add an 'OR' operator
-	sentence = string.split(' => ')
-	consequent = sentence[-1] # Assigning the last term as a consequent. Others are all premise.
-	premise = negatePremise(sentence[0].split(' & '))
-	modifiedSentence = premise + ' | ' + consequent
-	return modifiedSentence
-
-def negatePremise(sentence):
-	# If the premise is only a single predicate P(x,y), you can just return the string with a negated value attached.
-	# Split on the 'AND' symbol and then concatinate them with the 'OR' operator.
-	tempString = ''
-	if len(sentence) == 1 and '~' not in sentence[0]:
-		return '~' + sentence[0]
-	elif len(sentence) == 1:
-		return sentence[0][1:]
-	else:
-		sentence = ['~' + sentence[i] if '~' not in sentence[i] else sentence[i][1:] for i in range(len(sentence))]
-		return ' | '.join(sentence)
-
-def populateKB(cnfList):
-	global pattern
-	global KB
-	for i in cnfList:
-		literals = i.split(' | ')
-		for literal in literals:
-			predicate, params = re.match(pattern, literal).groups()
-			if predicate not in KB.keys():
-				KB[predicate] = {}
-				KB.get(predicate).update({'params': [params], 'cnf': [i]})
-			else:
-				KB.get(predicate)['params'].append(params)
-				if i not in KB.get(predicate)['cnf']:
-					KB.get(predicate)['cnf'].append(i)
-
-def inferFromKB(queries):
-	global outputDict
-	for query in queries:
-		flag = False
-		counter = 1
-		if counter == 1:
-			query = negateTerm(query)
-		resolutionString = resolutionStep(negateTerm(query))
-		counter += 1
-		if resolutionString == 'FAIL':
-			flag = True
-		# Modify the length of the resolution string to ensure that resolution was successful.
-		while len(resolutionString) != 0 and resolutionString != 'FAIL':
-			# There are strings still to be resolved.
-			searchString = resolutionString
-			searchStringSplit = searchString.split(' | ')
-			if len(searchStringSplit) == 1:
-				resultString = resolutionStep(negateTerm(searchStringSplit[0]))
-				if resultString == '':
-					# The same query was present in the KB, and query was a single literal, it can be resolved.
-					resolutionString = resultString
-				elif resultString == 'FAIL':
-					# No unificatio was possible
-					flag = True
-					outputDict[query] = 'FALSE'
-					resolutionString = ''
-				else:
-					# Will expect a cnf literal of more than 1 clause.
-					resolutionString = resultString
-			elif len(searchStringSplit) > 1:
-				for searchQuery in searchStringSplit:
-					resultString = resolutionStep(negateTerm(searchQuery))
-					if resultString == 'FAIL':
-						# Continue with other literals.
-						flag = True
-						continue
-					elif resultString == '':
-						# Continue resolution with other remaining literals
-						resolutionString = ' | '.join([searchStringSplit[i] for i in range(len(searchStringSplit)) if searchQuery != searchStringSplit[i]])
-						flag = False
+def resolveSentences(sentenceA, sentenceB):
+	sentenceSplitA = sentenceA.split(' | ')
+	sentenceSplitB = sentenceB.split(' | ')
+	formulasInferred = set()
+	for litA in sentenceSplitA:
+		for litB in sentenceSplitB:
+			if ('~' in litA and '~' not in litB) or ('~' not in litA and '~' in litB): #and (not ('~' in litA and '~' in litB)):
+				theta = unifyLists(litA, litB, {})
+				if theta != 'FAILURE':
+					unifiedSentenceA = applySubstitution(theta, sentenceA)
+					unifiedLitA = applySubstitution(theta, litA)
+					unifiedSentenceB = applySubstitution(theta, sentenceB)
+					unifiedLitB = applySubstitution(theta, litB)
+					sentenceC = unifiedSentenceA.difference(unifiedLitA).union(unifiedSentenceB.difference(unifiedLitB))
+					sentenceC = ' | '.join(list(sentenceC))
+					if len(sentenceC) == 0:
+						formulasInferred.add('JUNK')
 					else:
-						# You received a CNF Form resolved sentence. Set the resolution string to it.
-						resolutionString = resultString
-			elif counter > 100:
-				flag = True
-				outputDict[query] = 'FALSE'
-			counter += 1
-		if flag:
-			outputDict[query] = 'FALSE'
-		else:
-			outputDict[query] = 'TRUE'
-	return outputDict
+						formulasInferred.add(sentenceC)
+	return formulasInferred
 
-def resolutionStep(query):
+def applySubstitution(theta, sentence):
 	global pattern
+	splitVal = sentence.split(' | ')
+	tempList = []
+	for i in range(len(splitVal)):
+		predicate, params = re.match(pattern, splitVal[i]).groups()
+		paramsSplit = params.split(',')
+		for i in range(len(paramsSplit)):
+			tempVar = paramsSplit[i]
+			if tempVar.islower() and tempVar in theta.keys():
+				paramsSplit[i] = paramsSplit[i].replace(tempVar, theta[tempVar])
+		params = ','.join(paramsSplit)
+		tempList.append(predicate + '(' + params + ')')
+	return set(tempList)
+
+def unifyLists(litA, litB, theta):
+	global pattern
+	predA, argsA = re.match(pattern, litA).groups()
+	predB, argsB = re.match(pattern, litB).groups()
+	argsSplitA = argsA.split(',')
+	argsSplitB = argsB.split(',')
+	if '~' in predA:
+		predA = predA[1:]
+	elif '~' in predB:
+		predB = predB[1:]
+	if predA != predB or (len(argsSplitA) != len(argsSplitB)):
+		return 'FAILURE'
+	for i in range(len(argsSplitA)):
+		termA = argsSplitA[i]
+		termB = argsSplitB[i]
+		theta = unifyTerms(termA, termB, theta)
+		if theta == 'FAILURE':
+			return 'FAILURE'
+	return theta
+
+def unifyTerms(termA, termB, theta):
+	while termA.islower() and theta.get(termA, False):
+		termA = theta[termA]
+	while termB.islower() and theta.get(termB, False):
+		termB = theta[termB]
+	if termA == termB:
+		pass
+	elif termA.islower():
+		theta[termA] = termB
+	elif termB.islower():
+		theta[termB] = termA
+	elif not termA.islower() or not termB.islower():
+		theta = 'FAILURE'
+	else:
+		theta = unifyLists(termA, termB, theta)
+	return theta
+
+def convertToCNF(sentences):
+	# 3 types of variants to be handeled here.
+	# 1. p1 & p1 & p3 => q / ~q (Remove implication and handle the changes)
+	# 2. p1 & p2 (Consider each of them as seperate literals)
+	# 3. P(x,y)
+
 	global KB
-	predicate, argument = re.match(pattern, query).groups()
-	#print ("Params received and calculated are : ", query, predicate, argument)
-	# Retrieve the set of all possible sentences and their respective parameters from the KB.
-	cnfSentence, params = KB.get(predicate)['cnf'], KB.get(predicate)['params']
-	# You may or may not get multiple list of sentences.
-	# Check for unification and resolution for each and every sentence.
-	if query in cnfSentence:
-		# Check if query is single or not.
-		# Replace only the matched string in the current query and return.
-		return ''
-	for i in range(len(cnfSentence)):
-		# Try to unify with this sentence and it's respective parameters.
-		# Call unify query with parameters of this sentence.
-		subsList = unifyQuery(argument, params[i])
-		resolvedString = ''
-		if subsList == 'FAIL':
-			# Try to find the next possible parameter / string combination where you can unify this string.
-			#resolvedString = 'FAIL'
-			continue
-		elif subsList:
-			# This sentence was unifiable and I can replace the values in the sentence and return the resolved sentence.
-			sentenceSplit = cnfSentence[i].split(' | ')
-			tempList = []
-			# For each part in the multiple disjuncton literal.
-			for j in range(len(sentenceSplit)):
-				# Get the predicate name and parameters to be replaced for this string.
-				pred, args = re.match(pattern, sentenceSplit[j]).groups()
-				for keys in subsList.keys():
-					if keys in args:
-						args = args.replace(keys, subsList[keys])
-				# After replacing all the values, you will need to create the new predicate with the unified values.
-				if pred != predicate:
-					tempList.append(pred + '(' + args + ')')
-			# Create the new resolved string and return back this value.
-			# We need not iterate over all the other values in the cnfSentence.
-			resolvedString = ' | '.join(tempList)
-		return resolvedString
-	# No unification or resolution was possible and hence we return FAIL.
-	return 'FAIL'
 
-def unifyQuery(resolutionArgs, sentenceArgs):
-	# First Argument : Arguments of the given string to be resolved.
-	# Second Argument: Parameters of each and every sentence.
-	subsList = {} # Key value pairs to resolve the string.
-	if len([resolutionArgs]) == len([sentenceArgs]):
-		resolutionArgsSplit = resolutionArgs.split(',')
-		sentenceArgsSplit = sentenceArgs.split(',')
-		for i in range(len(resolutionArgsSplit)):
-			if resolutionArgsSplit[i][0].isupper() and sentenceArgsSplit[i][0].islower():
-				subsList[sentenceArgsSplit[i]] = resolutionArgsSplit[i]
-			elif resolutionArgsSplit[i][0].isupper() == sentenceArgsSplit[i][0].isupper() and (sentenceArgsSplit[i] != resolutionArgsSplit[i]):
-				# Strings are not equal, so we need not go further to check subsList.
-				# Return a value indicating we cannot create a subsList.
-				return 'FAIL'
-			elif resolutionArgsSplit[i][0].islower() and sentenceArgsSplit[i][0].isupper():
-				subsList[sentenceArgsSplit[i]] = resolutionArgsSplit[i]
-	else:
-		# Lengths are not equal and it is not possible to substitute the values.
-		return 'FAIL'
-	return subsList
+	for sentence in sentences:
+		if '=>' in sentence:
+			implicationList = sentence.split(' => ')
+			consequent = implicationList[-1]
+			premise = implicationList[0]
+			string = negateAndConvert(premise)
+			KB.append(string + ' | ' + consequent)
+		elif '&' in sentence:
+			literalSplit = sentence.split(' & ')
+			for val in literalSplit:
+				KB.append(val)
+		else:
+			KB.append(sentence)
 
-def negateTerm(string):
-	if '~' not in string:
-		string = '~' + string
-	else:
-		string = string[1:]
+def negateAndConvert(premiseList):
+	literals = premiseList.split(' & ')
+	tempList = []
+	for literal in literals:
+		tempList.append(negateLiteral(literal))
+	string = ' | '.join(tempList)
 	return string
 
-if __name__ == "__main__":
+def negateLiteral(literal):
+	if '~' in literal:
+		return literal[1:]
+	else:
+		return '~' + literal
+
+if __name__ == '__main__':
+	start = time.time()
 	readInput()
+	end = time.time()
+	print ("Time taken is : ", end - start)
