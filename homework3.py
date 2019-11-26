@@ -4,15 +4,17 @@ import copy
 import time
 
 KB = []
-pattern = r'([\~]?\w[\w]*)\((.*)\)$' # To be able to match the predicat and the specified parameters to the predicate in FOL
-outputDict = {}
+pattern = r'([\~]?\w[\w]*)\((.*)\)$' # To be able to mathc the predicat and the specified parameters to the predicate in FOL
+stdVariableDictionary = {}
+startTime = 0
 
 def readInput():
 	global KB
+	global startTime
 	queryList = []
 	KBList = []
 
-	input_file = open('input.txt', 'r')
+	input_file = open('input7.txt', 'r')
 	inputParams = input_file.readlines()
 	input_file.close()
 
@@ -27,6 +29,7 @@ def readInput():
 	convertToCNF(KBList)
 	outputString = ''
 	for query in queryList:
+		startTime = time.time()
 		queryResult = resolutionAlgorithm(KB, query)
 		outputString = outputString + queryResult + '\n'
 	outputString = outputString[0:len(outputString) - 1]
@@ -42,6 +45,11 @@ def resolutionAlgorithm(KB, alpha):
 	while True:
 		for i in range(len(clauses)):
 			for j in range(i+1, len(clauses)):
+				if clauses[i] == clauses[j]:
+					continue
+				endTime = time.time()
+				if int(endTime - startTime) > 15:
+					return 'FALSE'
 				resolvents = resolveSentences(clauses[i], clauses[j])
 				if 'JUNK' in resolvents:
 					return 'TRUE'
@@ -137,21 +145,46 @@ def convertToCNF(sentences):
 			consequent = implicationList[-1]
 			premise = implicationList[0]
 			string = negateAndConvert(premise)
-			KB.append(string + ' | ' + consequent)
-		elif '&' in sentence:
-			literalSplit = sentence.split(' & ')
-			for val in literalSplit:
-				KB.append(val)
+			cnfSentence = string + ' | ' + consequent
+			stdSentence = standardizeVariables(cnfSentence)
+			KB.append(stdSentence)
 		else:
-			KB.append(sentence)
+			stdSentence = standardizeVariables(sentence)
+			KB.append(stdSentence)
 
 def negateAndConvert(premiseList):
 	literals = premiseList.split(' & ')
+	# Return a list of standardized variables
 	tempList = []
 	for literal in literals:
 		tempList.append(negateLiteral(literal))
 	string = ' | '.join(tempList)
 	return string
+
+def standardizeVariables(sentence):
+	global pattern
+	global stdVariableDictionary
+	sentenceLiterals = []
+	variableSeen = []
+	stringSplit = sentence.split(' | ')
+	for strings in stringSplit:
+		predicate, arguments = re.match(pattern, strings).groups()
+		argsSplit = arguments.split(',')
+		for i in range(len(argsSplit)):
+			tempVar = argsSplit[i]
+			if tempVar.islower():
+				if tempVar not in stdVariableDictionary.keys():
+					stdVariableDictionary[tempVar] = 1
+					argsSplit[i] = tempVar.replace(tempVar, tempVar + str(stdVariableDictionary[tempVar]))
+					variableSeen.append(tempVar)
+				else:
+					argsSplit[i] = tempVar.replace(tempVar, tempVar + str(stdVariableDictionary[tempVar]))
+					variableSeen.append(tempVar)
+			else:
+				continue
+		arguments = ','.join(argsSplit)
+		sentenceLiterals.append(predicate + '(' + arguments + ')')
+	return ' | '.join(sentenceLiterals)
 
 def negateLiteral(literal):
 	if '~' in literal:
@@ -163,4 +196,4 @@ if __name__ == '__main__':
 	start = time.time()
 	readInput()
 	end = time.time()
-	print ("Time taken is : ", end - start)
+	print ("The total time to execute the program is : ", end - start)
